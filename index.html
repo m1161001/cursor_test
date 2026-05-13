@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>貪吃蛇</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --snake: #3fb950;
+      --snake-head: #56d364;
+      --food: #f85149;
+      --grid: #21262d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      background: radial-gradient(ellipse at top, #1a2332 0%, var(--bg) 55%);
+      color: var(--text);
+      padding: 1rem;
+    }
+    h1 {
+      font-weight: 600;
+      font-size: 1.5rem;
+      letter-spacing: 0.08em;
+      margin: 0 0 0.75rem;
+    }
+    .hud {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    .hud strong { color: var(--text); }
+    #wrap {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 0 0 1px #30363d, 0 16px 48px rgba(0,0,0,0.45);
+    }
+    canvas {
+      display: block;
+      background: var(--panel);
+      touch-action: none;
+    }
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(13, 17, 23, 0.88);
+      text-align: center;
+      padding: 1.5rem;
+    }
+    .overlay h2 { margin: 0 0 0.5rem; font-size: 1.25rem; }
+    .overlay p { margin: 0 0 1rem; color: var(--muted); font-size: 0.9rem; max-width: 280px; line-height: 1.5; }
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 8px;
+      padding: 0.65rem 1.4rem;
+      font-size: 1rem;
+      font-weight: 600;
+      font-family: inherit;
+      background: var(--snake);
+      color: #0d1117;
+    }
+    button:hover { filter: brightness(1.08); }
+    button:active { transform: scale(0.98); }
+    .help {
+      margin-top: 1rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+      max-width: 360px;
+      line-height: 1.5;
+    }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>貪吃蛇</h1>
+  <div class="hud">
+    <span>分數 <strong id="score">0</strong></span>
+    <span>最高分 <strong id="best">0</strong></span>
+  </div>
+  <div id="wrap">
+    <canvas id="game" width="400" height="400" aria-label="貪吃蛇遊戲畫布"></canvas>
+    <div id="startOverlay" class="overlay">
+      <h2>準備好了嗎？</h2>
+      <p>方向鍵或 WASD 移動。吃到紅色食物變長，撞牆或撞到自己則結束。</p>
+      <button type="button" id="btnStart">開始遊戲</button>
+    </div>
+    <div id="gameOverOverlay" class="overlay hidden">
+      <h2>遊戲結束</h2>
+      <p>本次分數 <strong id="finalScore">0</strong></p>
+      <button type="button" id="btnRestart">再玩一次</button>
+    </div>
+  </div>
+  <p class="help">手機可滑動：上下左右滑動改變方向（需先點「開始遊戲」）。</p>
+
+  <script>
+(function () {
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const scoreEl = document.getElementById("score");
+  const bestEl = document.getElementById("best");
+  const finalScoreEl = document.getElementById("finalScore");
+  const startOverlay = document.getElementById("startOverlay");
+  const gameOverOverlay = document.getElementById("gameOverOverlay");
+  const btnStart = document.getElementById("btnStart");
+  const btnRestart = document.getElementById("btnRestart");
+
+  const GRID = 20;
+  const COLS = canvas.width / GRID;
+  const ROWS = canvas.height / GRID;
+  const STORAGE_KEY = "snack-snake-best";
+
+  let best = parseInt(localStorage.getItem(STORAGE_KEY) || "0", 10) || 0;
+  bestEl.textContent = String(best);
+
+  let dir = { x: 1, y: 0 };
+  let nextDir = { x: 1, y: 0 };
+  let snake = [];
+  let food = { x: 0, y: 0 };
+  let score = 0;
+  let tickMs = 140;
+  let lastTick = 0;
+  let running = false;
+  let rafId = 0;
+
+  function randomCell() {
+    return {
+      x: Math.floor(Math.random() * COLS),
+      y: Math.floor(Math.random() * ROWS),
+    };
+  }
+
+  function spawnFood() {
+    let c;
+    let guard = 0;
+    do {
+      c = randomCell();
+      guard++;
+    } while (snake.some((s) => s.x === c.x && s.y === c.y) && guard < 500);
+    food = c;
+  }
+
+  function resetGame() {
+    const midY = Math.floor(ROWS / 2);
+    const midX = Math.floor(COLS / 2);
+    snake = [
+      { x: midX, y: midY },
+      { x: midX - 1, y: midY },
+      { x: midX - 2, y: midY },
+    ];
+    dir = { x: 1, y: 0 };
+    nextDir = { x: 1, y: 0 };
+    score = 0;
+    tickMs = 140;
+    scoreEl.textContent = "0";
+    spawnFood();
+  }
+
+  function drawGrid() {
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--panel").trim() || "#161b22";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue("--grid").trim() || "#21262d";
+    ctx.lineWidth = 1;
+    for (let x = 0; x <= canvas.width; x += GRID) {
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, 0);
+      ctx.lineTo(x + 0.5, canvas.height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= canvas.height; y += GRID) {
+      ctx.beginPath();
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(canvas.width, y + 0.5);
+      ctx.stroke();
+    }
+  }
+
+  function draw() {
+    drawGrid();
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--food").trim() || "#f85149";
+    ctx.beginPath();
+    ctx.roundRect(food.x * GRID + 2, food.y * GRID + 2, GRID - 4, GRID - 4, 4);
+    ctx.fill();
+
+    snake.forEach((seg, i) => {
+      const isHead = i === 0;
+      ctx.fillStyle = isHead
+        ? (getComputedStyle(document.documentElement).getPropertyValue("--snake-head").trim() || "#56d364")
+        : (getComputedStyle(document.documentElement).getPropertyValue("--snake").trim() || "#3fb950");
+      const pad = isHead ? 1 : 2;
+      ctx.beginPath();
+      ctx.roundRect(seg.x * GRID + pad, seg.y * GRID + pad, GRID - pad * 2, GRID - pad * 2, isHead ? 6 : 4);
+      ctx.fill();
+    });
+  }
+
+  function setDirection(nx, ny) {
+    if (nx === -dir.x && ny === -dir.y) return;
+    nextDir = { x: nx, y: ny };
+  }
+
+  function step() {
+    dir = nextDir;
+    const head = snake[0];
+    const newHead = { x: head.x + dir.x, y: head.y + dir.y };
+
+    if (newHead.x < 0 || newHead.x >= COLS || newHead.y < 0 || newHead.y >= ROWS) {
+      endGame();
+      return;
+    }
+    if (snake.some((s) => s.x === newHead.x && s.y === newHead.y)) {
+      endGame();
+      return;
+    }
+
+    snake.unshift(newHead);
+    if (newHead.x === food.x && newHead.y === food.y) {
+      score += 10;
+      scoreEl.textContent = String(score);
+      if (score > best) {
+        best = score;
+        bestEl.textContent = String(best);
+        localStorage.setItem(STORAGE_KEY, String(best));
+      }
+      tickMs = Math.max(70, tickMs - 3);
+      spawnFood();
+    } else {
+      snake.pop();
+    }
+  }
+
+  function endGame() {
+    running = false;
+    cancelAnimationFrame(rafId);
+    finalScoreEl.textContent = String(score);
+    gameOverOverlay.classList.remove("hidden");
+  }
+
+  function loop(ts) {
+    if (!running) return;
+    if (ts - lastTick >= tickMs) {
+      lastTick = ts;
+      step();
+      if (!running) return;
+    }
+    draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  function start() {
+    resetGame();
+    startOverlay.classList.add("hidden");
+    gameOverOverlay.classList.add("hidden");
+    running = true;
+    lastTick = performance.now();
+    draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  btnStart.addEventListener("click", start);
+  btnRestart.addEventListener("click", start);
+
+  window.addEventListener("keydown", (e) => {
+    if (!running && (e.code === "Space" || e.key === " ")) {
+      if (!startOverlay.classList.contains("hidden")) start();
+      else if (!gameOverOverlay.classList.contains("hidden")) start();
+      return;
+    }
+    if (!running) return;
+    switch (e.key) {
+      case "ArrowUp":
+      case "w":
+      case "W":
+        e.preventDefault();
+        setDirection(0, -1);
+        break;
+      case "ArrowDown":
+      case "s":
+      case "S":
+        e.preventDefault();
+        setDirection(0, 1);
+        break;
+      case "ArrowLeft":
+      case "a":
+      case "A":
+        e.preventDefault();
+        setDirection(-1, 0);
+        break;
+      case "ArrowRight":
+      case "d":
+      case "D":
+        e.preventDefault();
+        setDirection(1, 0);
+        break;
+      default:
+        break;
+    }
+  });
+
+  let touchStartX = 0;
+  let touchStartY = 0;
+  canvas.addEventListener(
+    "touchstart",
+    (e) => {
+      if (!running) return;
+      const t = e.changedTouches[0];
+      touchStartX = t.clientX;
+      touchStartY = t.clientY;
+    },
+    { passive: true }
+  );
+  canvas.addEventListener(
+    "touchend",
+    (e) => {
+      if (!running) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - touchStartX;
+      const dy = t.clientY - touchStartY;
+      const absX = Math.abs(dx);
+      const absY = Math.abs(dy);
+      if (absX < 24 && absY < 24) return;
+      if (absX > absY) setDirection(dx > 0 ? 1 : -1, 0);
+      else setDirection(0, dy > 0 ? 1 : -1);
+    },
+    { passive: true }
+  );
+
+  drawGrid();
+})();
+  </script>
+</body>
+</html>
